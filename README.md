@@ -1,114 +1,254 @@
-## Socius workspace
+# Socius - AI Networking Agent
 
-Socius is split into two apps that work together:
+Socius is an AI-powered networking assistant that helps you connect with interesting people at events. The agent autonomously reaches out to high-match people, manages conversations, and schedules meetings on your behalf.
 
-| Directory | Purpose |
-| --- | --- |
-| `nextjs-socios-/` | Next.js frontend that renders published Sanity content |
-| `studio-socios-/` | Sanity Studio used to author/manage the same content |
+## Architecture
 
-Run both locally to edit content in the Studio and immediately see it on the frontend.
+```
+┌─────────────────┐
+│   Mobile App    │  (iOS/Android - proximity detection)
+│  (To be built)  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌──────────────────┐
+│   Agent API     │────▶│  iMessage Server │  (macOS)
+│  (Port 5000)    │     │   (Port 5001)    │
+└────────┬────────┘     └──────────────────┘
+         │
+         ▼
+┌─────────────────┐     ┌──────────────────┐
+│   MCP Server    │────▶│   Sanity.io      │
+│  (Port 5002)    │     │   Redis          │
+│ (Team builds)   │     │   SQLite         │
+└─────────────────┘     └──────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Gmail API      │
+│  (Calendar +    │
+│   Email)        │
+└─────────────────┘
+```
 
----
+## Components
 
-## Requirements
+### 1. Agent API (`/agent`)
+The core AI agent built with Claude + LangChain. Handles:
+- Interest-based matching
+- Conversation management
+- Smart permissions
+- Action execution (messaging, scheduling, email)
 
-- Node.js 18+ (npm 9+)
-- Sanity CLI (`npm install -g sanity`) for Studio actions
-- Sanity project access: `projectId = c0j8rp13`, `dataset = production`
+**Tech stack:** Python, FastAPI, Claude API, LangChain
 
-Optional (but recommended):
+**Run:**
+```bash
+cd agent
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your API keys
+python main.py
+```
 
-- `SANITY_READ_TOKEN` for the Next.js app if you need private/draft access
-- `SANITY_AUTH_TOKEN` for Studio deployment automation
+### 2. iMessage Server (`/imessage-server`)
+macOS server that sends/receives iMessages via AppleScript.
 
----
+**Tech stack:** Python, FastAPI, AppleScript
+
+**Run (on Mac):**
+```bash
+cd imessage-server
+pip install -r requirements.txt
+python server.py
+```
+
+### 3. MCP Server (`/mcp-server`)
+**Status:** Your team is building this
+
+Should expose REST API for:
+- User profiles (Sanity.io)
+- Conversation history (Redis)
+- User preferences (SQLite)
+- Message templates (Sanity.io)
+
+### 4. Proximity Service (`/proximity-service`)
+**Status:** To be implemented (mobile app)
+
+Will detect nearby users and notify Agent API.
+
+## Features
+
+### Core Features
+- ✅ Interest-based matching algorithm
+- ✅ Autonomous outreach to high-match people
+- ✅ Permission-based action system
+- ✅ iMessage integration (via macOS server)
+- ✅ Gmail integration (email + calendar)
+- ✅ Conversation management with Claude
+- ✅ Adaptive communication style
+
+### Smart Permissions
+Users can configure when the agent acts autonomously:
+- `ALWAYS_ASK` - Ask before every action
+- `AUTO_HIGH_MATCH` - Auto-act for high matches (>75% compatibility)
+- `ALWAYS_AUTO` - Always act automatically
+- `NEVER` - Never perform this action
+
+### Matching Algorithm
+Calculates compatibility based on:
+- Interest overlap (40% weight)
+- Industry/field match (30% weight)
+- Role/seniority compatibility (20% weight)
+- Goals alignment (10% weight)
 
 ## Setup
 
-Clone this repo, then install dependencies per app:
+### Prerequisites
+- Python 3.9+
+- macOS (for iMessage server)
+- Anthropic API key
+- Google Cloud project with Gmail/Calendar API enabled
+
+### 1. Agent Setup
 
 ```bash
-cd nextjs-socios-
-npm install
-
-cd ../studio-socios-
-npm install
+cd agent
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-> Keep each command scoped to its folder so the correct `package.json` is used.
+Edit `.env`:
+```bash
+ANTHROPIC_API_KEY=your_key_here
+IMESSAGE_SERVER_URL=http://localhost:5001
+MCP_SERVER_URL=http://localhost:5002
+```
+
+For Gmail integration, follow [Google's OAuth setup guide](https://developers.google.com/gmail/api/quickstart/python) and place credentials in `agent/credentials/gmail_credentials.json`.
+
+### 2. iMessage Server Setup (Mac only)
+
+```bash
+cd imessage-server
+pip install -r requirements.txt
+```
+
+Grant Full Disk Access:
+1. System Preferences → Security & Privacy → Privacy
+2. Full Disk Access → Add Terminal/iTerm
+3. Restart Terminal
+
+Run:
+```bash
+python server.py
+```
+
+### 3. Test the System
+
+```bash
+# Terminal 1: Start iMessage server
+cd imessage-server
+python server.py
+
+# Terminal 2: Start Agent API
+cd agent
+python main.py
+
+# Terminal 3: Test detection
+curl -X POST http://localhost:5000/users/user123/detected \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "user123",
+    "other_user_id": "user456",
+    "context": {"event_name": "Test Event"}
+  }'
+```
+
+## API Documentation
+
+### Agent API (Port 5000)
+
+Interactive docs: `http://localhost:5000/docs`
+
+**Key endpoints:**
+- `POST /users/{user_id}/detected` - Handle user detection
+- `POST /users/{user_id}/messages/incoming` - Handle incoming messages
+- `POST /users/{user_id}/task` - Execute arbitrary task
+- `GET /users/{user_id}/profile` - Get user profile
+- `PATCH /users/{user_id}/preferences` - Update preferences
+
+### iMessage Server (Port 5001)
+
+Interactive docs: `http://localhost:5001/docs`
+
+**Key endpoints:**
+- `POST /send` - Send iMessage
+- `GET /messages` - Get recent messages
+- `GET /logs` - Get send logs
+
+## Development
+
+### Project Structure
+
+```
+socius/
+├── agent/                 # AI agent core
+│   ├── core/             # Agent logic
+│   │   ├── agent.py      # Main agent with Claude
+│   │   ├── matching.py   # Matching algorithm
+│   │   └── permissions.py # Permission system
+│   ├── tools/            # Integration tools
+│   │   ├── imessage_tool.py
+│   │   ├── gmail_tool.py
+│   │   └── mcp_client.py
+│   ├── main.py           # FastAPI server
+│   └── config.py         # Configuration
+├── imessage-server/      # macOS iMessage bridge
+│   ├── server.py
+│   └── README.md
+├── proximity-service/    # To be implemented
+└── README.md
+```
+
+### Adding New Actions
+
+1. Add tool function to `agent/core/agent.py`
+2. Register with LangChain in `_setup_langchain_agent()`
+3. Update permissions in `agent/core/permissions.py`
+4. Add endpoint to `agent/main.py` if needed
+
+### Testing
+
+```bash
+# Test matching algorithm
+cd agent
+python -m pytest tests/test_matching.py
+
+# Test permissions
+python -m pytest tests/test_permissions.py
+```
+
+## Next Steps
+
+1. **Your team:** Build MCP server with Sanity.io, Redis, SQLite
+2. **Mobile app:** Implement proximity detection (iOS/Android)
+3. **Testing:** Create test user profiles and scenarios
+4. **UI:** Build mobile app interface for approvals and chat handoff
+5. **Production:** Add authentication, rate limiting, monitoring
+
+## Security Notes
+
+- iMessage server should only be accessible on trusted network
+- Add API authentication before production
+- Protect user data in MCP server with proper access controls
+- Use environment variables for all secrets
+- Consider end-to-end encryption for sensitive data
+
+## License
+
+Private project - All rights reserved
 
 ---
 
-## Running locally
-
-### Next.js frontend (`nextjs-socios-/`)
-
-```bash
-cd nextjs-socios-
-npm run dev
-```
-
-- Serves at <http://localhost:3000>.
-- Uses `src/sanity/client.ts` which is configured for project `c0j8rp13`, dataset `production`.
-- To read protected content, expose a token via env (e.g. `SANITY_READ_TOKEN`) and update the client config accordingly.
-- Additional scripts: `npm run build`, `npm run start`, `npm run lint`.
-
-### Sanity Studio (`studio-socios-/`)
-
-```bash
-cd studio-socios-
-npm run dev
-```
-
-- Runs `sanity dev` at <http://localhost:3333> using Vite.
-- Requires you to be logged in via `sanity login` with access to the project/dataset above.
-- Scripts: `npm run start` (alias), `npm run build`, `npm run deploy`.
-
----
-
-## Deploying
-
-### Sanity Studio
-
-The Studio is hosted by Sanity at <https://socius-studio.sanity.studio/>.
-
-1. Ensure `studio-socios-/sanity.cli.ts` contains:
-   ```ts
-   deployment: {
-     host: 'socius-studio',
-     autoUpdates: true,
-     appId: 'av4afacc31hqngek1m6bn1xz', // add once assigned in Manage UI
-   }
-   ```
-2. Deploy:
-   ```bash
-   cd studio-socios-
-   npm run deploy
-   ```
-   You’ll be prompted for login if not already authenticated.
-
-### Next.js app
-
-Deploy however you prefer (e.g. Vercel). Ensure the environment contains:
-
-- `SANITY_PROJECT_ID=c0j8rp13`
-- `SANITY_DATASET=production`
-- `SANITY_READ_TOKEN=<optional token>`
-
-Build/start commands:
-
-```bash
-cd nextjs-socios-
-npm run build
-npm run start
-```
-
----
-
-## Useful references
-
-- Sanity docs: https://www.sanity.io/docs
-- Sanity project: https://www.sanity.io/manage/project/c0j8rp13
-- Studio deployment dashboard: https://www.sanity.io/manage/project/c0j8rp13/studios
-- Next.js docs: https://nextjs.org/docs
+Built with ❤️ using Claude, LangChain, and FastAPI
