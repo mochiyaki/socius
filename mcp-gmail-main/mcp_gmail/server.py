@@ -464,19 +464,26 @@ def get_emails(message_ids: list[str]) -> str:
 
     return result
 
-# ---------- RESOURCES ----------
+# ---------- TOOLS ----------
 
-@mcp.resource("calendar://events/{event_id}")
+@mcp.tool()
 def get_calendar_event(event_id: str, calendar_id: str = "primary") -> str:
     """Fetch a single Google Calendar event by ID."""
     try:
         event = calendar_service.events().get(
             calendarId=calendar_id, eventId=event_id
         ).execute()
-        return f"Event ID: {event_id}\nSummary: {event.get('summary')}\nStart: {event['start']}\nEnd: {event['end']}"
+        return (
+            f"Event ID: {event_id}\n"
+            f"Summary: {event.get('summary')}\n"
+            f"Start: {event['start']}\n"
+            f"End: {event['end']}"
+        )
     except Exception as e:
         return f"Error retrieving event: {e}"
 
+
+# ---------- RESOURCES ----------
 
 @mcp.resource("calendar://calendars/{calendar_id}")
 def get_calendar(calendar_id: str) -> str:
@@ -488,7 +495,7 @@ def get_calendar(calendar_id: str) -> str:
         return f"Error retrieving calendar: {e}"
 
 
-# ---------- TOOLS ----------
+# ---------- OTHER TOOLS ----------
 
 @mcp.tool()
 def list_calendars() -> str:
@@ -522,7 +529,12 @@ def list_events(
 
     result = f"Found {len(events)} events:\n"
     for e in events:
-        result += f"\nEvent ID: {e['id']}\nSummary: {e.get('summary')}\nStart: {e['start']}\nEnd: {e['end']}\n"
+        result += (
+            f"\nEvent ID: {e['id']}\n"
+            f"Summary: {e.get('summary')}\n"
+            f"Start: {e['start']}\n"
+            f"End: {e['end']}\n"
+        )
     return result
 
 
@@ -566,10 +578,14 @@ def update_event(
         calendarId=calendar_id, eventId=event_id
     ).execute()
 
-    if summary: event["summary"] = summary
-    if description: event["description"] = description
-    if start: event["start"] = {"dateTime": start}
-    if end: event["end"] = {"dateTime": end}
+    if summary:
+        event["summary"] = summary
+    if description:
+        event["description"] = description
+    if start:
+        event["start"] = {"dateTime": start}
+    if end:
+        event["end"] = {"dateTime": end}
 
     updated = calendar_service.events().update(
         calendarId=calendar_id, eventId=event_id, body=event
@@ -598,6 +614,9 @@ def quick_add_event(text: str, calendar_id: str = "primary") -> str:
     ).execute()
 
     return f"Quick-created event:\nID: {event['id']}\nSummary: {event.get('summary')}"
+
+
+# ---------- MCP SERVER ENTRY ----------
 
 if __name__ == "__main__":
     mcp.settings.port = 8090
