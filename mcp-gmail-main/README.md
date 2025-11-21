@@ -90,8 +90,8 @@ Development mode:
 ```bash
 uv run mcp dev mcp_gmail/server.py
 ```
-
-This will spin up an MCP Inspector application that you can use to interact with the MCP server.
+This will launch an mcp server at http://127.0.0.1:8090/sse,
+You can test it out with mcp inspector,
 
 Or install for use with Claude Desktop:
 ```bash

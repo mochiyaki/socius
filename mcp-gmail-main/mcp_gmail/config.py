@@ -1,5 +1,5 @@
 """
-Configuration settings for the MCP Gmail server.
+Configuration settings for the MCP Gmail + Google Calendar server.
 """
 
 import json
@@ -16,17 +16,30 @@ from mcp_gmail.gmail import (
     GMAIL_SCOPES,
 )
 
+# NEW — Add Calendar scopes
+try:
+    from mcp_gmail.calendar import CALENDAR_SCOPES
+except ImportError:
+    # fallback if you haven't created mcp_gmail/calendar.py
+    CALENDAR_SCOPES = [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events",
+    ]
+
 
 class Settings(BaseSettings):
     """
-    Settings model for MCP Gmail server configuration.
+    Settings model for MCP Gmail + Calendar server configuration.
 
     Automatically reads from environment variables with MCP_GMAIL_ prefix.
     """
 
     credentials_path: str = DEFAULT_CREDENTIALS_PATH
     token_path: str = DEFAULT_TOKEN_PATH
-    scopes: List[str] = GMAIL_SCOPES
+
+    # ✔ Combine Gmail + Calendar scopes
+    scopes: List[str] = GMAIL_SCOPES + CALENDAR_SCOPES
+
     user_id: str = DEFAULT_USER_ID
     max_results: int = 10
 
@@ -43,25 +56,18 @@ class Settings(BaseSettings):
 def get_settings(config_file: Optional[str] = None) -> Settings:
     """
     Get settings instance, optionally loaded from a config file.
-    Uses LRU cache for performance.
-
-    Args:
-        config_file: Path to a JSON configuration file (optional)
-
-    Returns:
-        Settings instance
     """
+
     if config_file is None:
         return Settings()
 
-    # Override with config file if provided
     if config_file and os.path.exists(config_file):
         with open(config_file, "r") as f:
-            file_config = json.load(f)
-            settings = Settings.model_validate(file_config)
+            data = json.load(f)
+            return Settings.model_validate(data)
 
-    return settings
+    return Settings()
 
 
-# Create a default settings instance
+# Default settings instance
 settings = get_settings()
