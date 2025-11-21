@@ -3,21 +3,12 @@ import redis
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
 import os
-
-def validate_iso_date(v: str) -> str:
-    """Validate that a string is a valid ISO format date (YYYY-MM-DD)"""
-    try:
-        datetime.fromisoformat(v).date()
-        return v
-    except (ValueError, TypeError):
-        raise ValueError("Date must be in ISO format (YYYY-MM-DD)")
 
 # Load environment variables
 load_dotenv()
 
-app = FastAPI(title="Accountability Agent API", version="1.0.0")
+app = FastAPI(title="Redis API", version="1.0.0")
 
 # Enable CORS
 app.add_middleware(
