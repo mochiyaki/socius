@@ -1,34 +1,20 @@
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from dotenv import load_dotenv
 from datetime import datetime
-import uuid
-import logging
+import os
 
-from models import (
-    Agent, AgentCreate, AgentUpdate, AgentStatus,
-    ChatRequest, ChatResponse, ContentQuery
-)
-from config import settings
-from services.redis_service import redis_service
-from services.sanity_service import sanity_service
-from services.agent_service import agent_service
-from services.mcp_server import mcp_server
+def validate_iso_date(v: str) -> str:
+    """Validate that a string is a valid ISO format date (YYYY-MM-DD)"""
+    try:
+        datetime.fromisoformat(v).date()
+        return v
+    except (ValueError, TypeError):
+        raise ValueError("Date must be in ISO format (YYYY-MM-DD)")
 
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=settings.log_level)
-logger = logging.getLogger(__name__)
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="MCP Agent API",
-    description="FastAPI backend with Redis, LangChain, Claude Sonnet 4.5, and Sanity CMS",
-    version="1.0.0"
-)
+app = FastAPI(title="Accountability Agent API", version="1.0.0")
 
 # Enable CORS
 app.add_middleware(
