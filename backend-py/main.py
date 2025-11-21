@@ -146,7 +146,7 @@ async def update_agent(agent_id: str, updates: AgentUpdate):
             )
         
         update_data = updates.dict(exclude_unset=True)
-        update_data["updated_at"] = datetime.utcnow().isoformat()
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         
         success = redis_service.update_agent(agent_id, update_data)
         if not success:
