@@ -1,2 +1,0 @@
-## socius
-Let's go!
