@@ -63,16 +63,35 @@ pip install -r requirements.txt
 python server.py
 ```
 
-### 3. MCP Server (`/mcp-server`)
-**Status:** Your team is building this
-
-Should expose REST API for:
+### 3. MCP Server (`/mcp-server`) - ✅ BUILT
+Central data server providing REST API for:
 - User profiles (Sanity.io)
-- Conversation history (Redis)
+- Conversation history (Redis cache)
 - User preferences (SQLite)
 - Message templates (Sanity.io)
+- Interaction logs (SQLite)
 
-### 4. Proximity Service (`/proximity-service`)
+**Tech stack:** Python, FastAPI, Redis, SQLite, Sanity HTTP API
+
+**Run:**
+```bash
+cd mcp-server
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with Sanity API token
+python main.py  # Runs on port 5002
+```
+
+See [mcp-server/README.md](mcp-server/README.md) for full setup instructions.
+
+### 4. Gmail MCP Server (`/mcp-gmail-and-calendar`)
+MCP server for Gmail operations (separate from main MCP server).
+
+**Tech stack:** Python, FastMCP, Gmail API
+
+See [mcp-gmail-and-calendar/README.md](mcp-gmail-and-calendar/README.md) for setup.
+
+### 5. Proximity Service (`/proximity-service`)
 **Status:** To be implemented (mobile app)
 
 Will detect nearby users and notify Agent API.

@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,46 +18,24 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Virtual environments
 venv/
 env/
 ENV/
 .venv
-
-# Environment variables
 .env
 .env.local
-
-# Credentials
-agent/credentials/
-*.json
-!requirements.txt
-
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Logs
 *.log
 logs/
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Cache
-.cache/
 .pytest_cache/
-
-# iMessage server logs
-imessage-server/imessage_log.db
-*.zip
+.coverage
+htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
