@@ -1,7 +1,18 @@
+from config import settings
+from services.redis_service import redis_service
+from models import Agent, AgentCreate, AgentUpdate, AgentStatus
+import uuid
+from datetime import datetime, timezone
+import logging
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("backend.api")
 
 def validate_iso_date(v: str) -> str:
     """Validate that a string is a valid ISO format date (YYYY-MM-DD)"""
