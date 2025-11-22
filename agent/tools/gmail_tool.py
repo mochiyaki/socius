@@ -2,30 +2,31 @@
 Gmail Tool for sending emails and managing calendar.
 """
 import os
-import pickle
 import logging
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from email.mime.text import MIMEText
-import base64
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, List
 
-from config import Config
-from socius_types import EmailSendResponse, CalendarEventResponse, BusyTimeSlot
-from exceptions import GmailAuthError, GmailSendError, CalendarAuthError, CalendarEventError
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+from mcp_gmail.config import settings
+from mcp_gmail.gmail import (
+    create_draft,
+    get_gmail_service,
+    get_headers_dict,
+    get_labels,
+    get_message,
+    get_thread,
+    list_messages,
+    modify_message_labels,
+    parse_message_body,
+    search_messages,
+    send_email as gmail_send_email
+)
 
 logger = logging.getLogger(__name__)
 
-# Scopes for Gmail and Calendar access
-SCOPES = [
-    'https://www.googleapis.com/auth/gmail.send',
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/calendar'
-]
+EMAIL_PREVIEW_LENGTH = 200
 
 
 class GmailTool:
@@ -33,262 +34,278 @@ class GmailTool:
 
     def __init__(self):
         """
-        Initialize Gmail tool and authenticate with Google API.
-
-        Raises:
-            GmailAuthError: If authentication fails
-            CalendarAuthError: If calendar service initialization fails
-        """
-        self.creds = None
-        self.gmail_service = None
-        self.calendar_service = None
-        self._authenticate()
-
-    def _authenticate(self) -> None:
-        """
-        Authenticate with Google API.
-
-        Raises:
-            GmailAuthError: If authentication fails
+        Initialize Gmail tool and build Gmail & Calendar services.
         """
         try:
-            # Check if token exists
-            if os.path.exists(Config.GMAIL_TOKEN_PATH):
-                with open(Config.GMAIL_TOKEN_PATH, 'rb') as token:
-                    self.creds = pickle.load(token)
-
-            # If no valid credentials, let user log in
-            if not self.creds or not self.creds.valid:
-                if self.creds and self.creds.expired and self.creds.refresh_token:
-                    self.creds.refresh(Request())
-                else:
-                    if not os.path.exists(Config.GMAIL_CREDENTIALS_PATH):
-                        raise GmailAuthError(
-                            f"Gmail credentials not found at {Config.GMAIL_CREDENTIALS_PATH}"
-                        )
-
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        Config.GMAIL_CREDENTIALS_PATH, SCOPES
-                    )
-                    self.creds = flow.run_local_server(port=0)
-
-                # Save credentials for next run
-                os.makedirs(os.path.dirname(Config.GMAIL_TOKEN_PATH), exist_ok=True)
-                with open(Config.GMAIL_TOKEN_PATH, 'wb') as token:
-                    pickle.dump(self.creds, token)
-
-            # Build services
-            self.gmail_service = build('gmail', 'v1', credentials=self.creds)
-            self.calendar_service = build('calendar', 'v3', credentials=self.creds)
-
-            logger.info("Successfully authenticated with Gmail and Calendar APIs")
-
-        except FileNotFoundError as e:
-            raise GmailAuthError(f"Credentials file not found: {e}") from e
+            self.service = get_gmail_service(
+                credentials_path=settings.credentials_path,
+                token_path=settings.token_path,
+                scopes=settings.scopes
+            )
+            self.calendar_service = build("calendar", "v3", credentials=self.service._http.credentials)
+            logger.info("Gmail and Calendar services initialized successfully.")
         except Exception as e:
-            logger.error(f"Gmail authentication failed: {e}")
-            raise GmailAuthError(f"Failed to authenticate with Gmail: {e}") from e
+            logger.error(f"Failed to initialize GmailTool: {e}")
+            raise RuntimeError(f"Failed to initialize GmailTool: {e}") from e
+
+    # ---------- Helper Methods ----------
+
+    def _format_message(self, message) -> str:
+        """Format a Gmail message for display."""
+        headers = get_headers_dict(message)
+        body = parse_message_body(message)
+
+        from_header = headers.get("From", "Unknown")
+        to_header = headers.get("To", "Unknown")
+        subject = headers.get("Subject", "No Subject")
+        date = headers.get("Date", "Unknown Date")
+
+        return f"""
+From: {from_header}
+To: {to_header}
+Subject: {subject}
+Date: {date}
+
+{body}
+"""
+
+    def _validate_date_format(self, date_str: Optional[str]) -> bool:
+        """Validate date string format YYYY/MM/DD."""
+        if not date_str:
+            return True
+        try:
+            datetime.strptime(date_str, "%Y/%m/%d")
+            return True
+        except ValueError:
+            return False
+
+    # ---------- Email Methods ----------
+
+    def get_email_message(self, message_id: str) -> str:
+        """Get the content of an email message by its ID."""
+        message = get_message(self.service, message_id, user_id=settings.user_id)
+        return self._format_message(message)
+
+    def get_emails(self, message_ids: List[str]) -> str:
+        """Get content of multiple email messages by IDs."""
+        if not message_ids:
+            return "No message IDs provided."
+
+        retrieved = []
+        errors = []
+
+        for msg_id in message_ids:
+            try:
+                message = get_message(self.service, msg_id, user_id=settings.user_id)
+                retrieved.append((msg_id, message))
+            except Exception as e:
+                errors.append((msg_id, str(e)))
+
+        result = f"Retrieved {len(retrieved)} emails:\n"
+        for i, (msg_id, message) in enumerate(retrieved, 1):
+            result += f"\n--- Email {i} (ID: {msg_id}) ---\n"
+            result += self._format_message(message)
+
+        if errors:
+            result += f"\n\nFailed to retrieve {len(errors)} emails:\n"
+            for i, (msg_id, error) in enumerate(errors, 1):
+                result += f"\n--- Email {i} (ID: {msg_id}) ---\nError: {error}\n"
+
+        return result
+
+    def get_email_thread(self, thread_id: str) -> str:
+        """Get all messages in an email thread."""
+        thread = get_thread(self.service, thread_id, user_id=settings.user_id)
+        messages = thread.get("messages", [])
+
+        result = f"Email Thread (ID: {thread_id})\n"
+        for i, message in enumerate(messages, 1):
+            result += f"\n--- Message {i} ---\n"
+            result += self._format_message(message)
+        return result
+
+    def compose_email(
+        self, to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None
+    ) -> str:
+        """Compose a new email draft."""
+        sender = self.service.users().getProfile(userId=settings.user_id).execute().get("emailAddress")
+        draft = create_draft(
+            self.service,
+            sender=sender,
+            to=to,
+            subject=subject,
+            body=body,
+            user_id=settings.user_id,
+            cc=cc,
+            bcc=bcc
+        )
+        draft_id = draft.get("id")
+        return f"""
+Email draft created with ID: {draft_id}
+To: {to}
+Subject: {subject}
+CC: {cc or ""}
+BCC: {bcc or ""}
+Body: {body[:EMAIL_PREVIEW_LENGTH]}{"..." if len(body) > EMAIL_PREVIEW_LENGTH else ""}
+"""
 
     def send_email(
+        self, to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None
+    ) -> str:
+        """Send an email via Gmail."""
+        sender = self.service.users().getProfile(userId=settings.user_id).execute().get("emailAddress")
+        message = gmail_send_email(
+            self.service,
+            sender=sender,
+            to=to,
+            subject=subject,
+            body=body,
+            user_id=settings.user_id,
+            cc=cc,
+            bcc=bcc
+        )
+        message_id = message.get("id")
+        return f"""
+Email sent successfully with ID: {message_id}
+To: {to}
+Subject: {subject}
+CC: {cc or ""}
+BCC: {bcc or ""}
+Body: {body[:EMAIL_PREVIEW_LENGTH]}{"..." if len(body) > EMAIL_PREVIEW_LENGTH else ""}
+"""
+
+    def search_emails(
         self,
-        to: str,
-        subject: str,
-        body: str,
-        html: bool = False
-    ) -> EmailSendResponse:
-        """
-        Send an email via Gmail.
+        from_email: Optional[str] = None,
+        to_email: Optional[str] = None,
+        subject: Optional[str] = None,
+        has_attachment: bool = False,
+        is_unread: bool = False,
+        after_date: Optional[str] = None,
+        before_date: Optional[str] = None,
+        label: Optional[str] = None,
+        max_results: int = 10,
+    ) -> str:
+        """Search emails with filters."""
+        if after_date and not self._validate_date_format(after_date):
+            return f"Error: after_date '{after_date}' is not valid"
+        if before_date and not self._validate_date_format(before_date):
+            return f"Error: before_date '{before_date}' is not valid"
 
-        Args:
-            to: Recipient email address
-            subject: Email subject
-            body: Email body content
-            html: Whether body is HTML (default False for plain text)
+        messages = search_messages(
+            self.service,
+            user_id=settings.user_id,
+            from_email=from_email,
+            to_email=to_email,
+            subject=subject,
+            has_attachment=has_attachment,
+            is_unread=is_unread,
+            after=after_date,
+            before=before_date,
+            labels=[label] if label else None,
+            max_results=max_results
+        )
 
-        Returns:
-            Response dict with success status and message ID
+        result = f"Found {len(messages)} messages matching criteria:\n"
+        for msg_info in messages:
+            msg_id = msg_info.get("id")
+            message = get_message(self.service, msg_id, user_id=settings.user_id)
+            headers = get_headers_dict(message)
+            from_header = headers.get("From", "Unknown")
+            subject_header = headers.get("Subject", "No Subject")
+            date = headers.get("Date", "Unknown Date")
+            result += f"\nMessage ID: {msg_id}\nFrom: {from_header}\nSubject: {subject_header}\nDate: {date}\n"
+        return result
 
-        Raises:
-            GmailSendError: If email sending fails
-        """
+    def query_emails(self, query: str, max_results: int = 10) -> str:
+        """Search emails using a raw Gmail query string."""
+        messages = list_messages(self.service, user_id=settings.user_id, max_results=max_results, query=query)
+        result = f'Found {len(messages)} messages matching query: "{query}"\n'
+        for msg_info in messages:
+            msg_id = msg_info.get("id")
+            message = get_message(self.service, msg_id, user_id=settings.user_id)
+            headers = get_headers_dict(message)
+            from_header = headers.get("From", "Unknown")
+            subject_header = headers.get("Subject", "No Subject")
+            date = headers.get("Date", "Unknown Date")
+            result += f"\nMessage ID: {msg_id}\nFrom: {from_header}\nSubject: {subject_header}\nDate: {date}\n"
+        return result
+
+    def list_available_labels(self) -> str:
+        """Get all Gmail labels for the user."""
+        labels = get_labels(self.service, user_id=settings.user_id)
+        result = "Available Gmail Labels:\n"
+        for label in labels:
+            label_id = label.get("id", "Unknown")
+            name = label.get("name", "Unknown")
+            type_info = label.get("type", "user")
+            result += f"\nLabel ID: {label_id}\nName: {name}\nType: {type_info}\n"
+        return result
+
+    def mark_message_read(self, message_id: str) -> str:
+        """Mark a message as read by removing UNREAD label."""
+        result = modify_message_labels(
+            self.service, user_id=settings.user_id, message_id=message_id, remove_labels=["UNREAD"], add_labels=[]
+        )
+        headers = get_headers_dict(result)
+        subject = headers.get("Subject", "No Subject")
+        return f"Message marked as read:\nID: {message_id}\nSubject: {subject}"
+
+    def add_label_to_message(self, message_id: str, label_id: str) -> str:
+        """Add a label to a message."""
+        modify_message_labels(self.service, user_id=settings.user_id, message_id=message_id, remove_labels=[], add_labels=[label_id])
+        labels = get_labels(self.service, user_id=settings.user_id)
+        label_name = next((l.get("name") for l in labels if l.get("id") == label_id), label_id)
+        headers = get_headers_dict(get_message(self.service, message_id, user_id=settings.user_id))
+        subject = headers.get("Subject", "No Subject")
+        return f"Label added to message:\nID: {message_id}\nSubject: {subject}\nAdded Label: {label_name} ({label_id})"
+
+    def remove_label_from_message(self, message_id: str, label_id: str) -> str:
+        """Remove a label from a message."""
+        labels = get_labels(self.service, user_id=settings.user_id)
+        label_name = next((l.get("name") for l in labels if l.get("id") == label_id), label_id)
+        modify_message_labels(self.service, user_id=settings.user_id, message_id=message_id, remove_labels=[label_id], add_labels=[])
+        headers = get_headers_dict(get_message(self.service, message_id, user_id=settings.user_id))
+        subject = headers.get("Subject", "No Subject")
+        return f"Label removed from message:\nID: {message_id}\nSubject: {subject}\nRemoved Label: {label_name} ({label_id})"
+
+    # ---------- Calendar Methods ----------
+
+    def get_calendar_event(self, event_id: str, calendar_id: str = "primary") -> str:
+        """Fetch a single Google Calendar event by ID."""
         try:
-            message = MIMEText(body, 'html' if html else 'plain')
-            message['to'] = to
-            message['subject'] = subject
-
-            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-            message_body = {'raw': raw}
-
-            result = self.gmail_service.users().messages().send(
-                userId='me',
-                body=message_body
-            ).execute()
-
-            logger.info(f"Successfully sent email to {to}")
-
-            return {
-                'success': True,
-                'message_id': result['id'],
-                'recipient': to,
-                'error': None
-            }
-
-        except HttpError as error:
-            logger.error(f"Gmail API error sending email: {error}")
-            raise GmailSendError(f"Gmail API error: {error}") from error
-
+            event = self.calendar_service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            return f"Event ID: {event_id}\nSummary: {event.get('summary')}\nStart: {event['start']}\nEnd: {event['end']}"
         except Exception as e:
-            logger.error(f"Unexpected error sending email: {e}")
-            raise GmailSendError(f"Failed to send email: {e}") from e
+            return f"Error retrieving event: {e}"
 
-    def create_calendar_event(
-        self,
-        summary: str,
-        start_time: datetime,
-        end_time: datetime,
-        attendees: List[str],
-        description: Optional[str] = None,
-        location: Optional[str] = None
-    ) -> CalendarEventResponse:
-        """
-        Create a calendar event.
+    def list_calendars(self) -> str:
+        """List all calendars for the user."""
+        calendars = self.calendar_service.calendarList().list().execute().get("items", [])
+        return "\n".join([f"- {cal.get('summary')} (ID: {cal.get('id')})" for cal in calendars])
 
-        Args:
-            summary: Event title
-            start_time: Event start datetime
-            end_time: Event end datetime
-            attendees: List of attendee email addresses
-            description: Optional event description
-            location: Optional event location
+    def create_event(self, summary: str, start: str, end: str, description: Optional[str] = None, calendar_id: str = "primary") -> str:
+        """Create a calendar event."""
+        event_data = {"summary": summary, "description": description, "start": {"dateTime": start}, "end": {"dateTime": end}}
+        event = self.calendar_service.events().insert(calendarId=calendar_id, body=event_data).execute()
+        return f"Event created:\nID: {event['id']}\nSummary: {summary}"
 
-        Returns:
-            Response dict with success status and event details
+    def update_event(self, event_id: str, summary: Optional[str] = None, description: Optional[str] = None, start: Optional[str] = None, end: Optional[str] = None, calendar_id: str = "primary") -> str:
+        """Update an existing event."""
+        event = self.calendar_service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        if summary: event["summary"] = summary
+        if description: event["description"] = description
+        if start: event["start"] = {"dateTime": start}
+        if end: event["end"] = {"dateTime": end}
+        updated = self.calendar_service.events().update(calendarId=calendar_id, eventId=event_id, body=event).execute()
+        return f"Event updated: {updated['id']}"
 
-        Raises:
-            CalendarEventError: If event creation fails
-        """
-        try:
-            event = {
-                'summary': summary,
-                'start': {
-                    'dateTime': start_time.isoformat(),
-                    'timeZone': 'UTC',
-                },
-                'end': {
-                    'dateTime': end_time.isoformat(),
-                    'timeZone': 'UTC',
-                },
-                'attendees': [{'email': email} for email in attendees],
-            }
+    def delete_event(self, event_id: str, calendar_id: str = "primary") -> str:
+        """Delete a calendar event."""
+        self.calendar_service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        return f"Event {event_id} deleted."
 
-            if description:
-                event['description'] = description
-
-            if location:
-                event['location'] = location
-
-            result = self.calendar_service.events().insert(
-                calendarId='primary',
-                body=event,
-                sendUpdates='all'
-            ).execute()
-
-            logger.info(f"Successfully created calendar event: {summary}")
-
-            return {
-                'success': True,
-                'event_id': result['id'],
-                'event_link': result.get('htmlLink'),
-                'attendees': attendees,
-                'error': None
-            }
-
-        except HttpError as error:
-            logger.error(f"Calendar API error creating event: {error}")
-            raise CalendarEventError(f"Calendar API error: {error}") from error
-
-        except Exception as e:
-            logger.error(f"Unexpected error creating event: {e}")
-            raise CalendarEventError(f"Failed to create event: {e}") from e
-
-    def get_availability(
-        self,
-        start_date: datetime,
-        end_date: datetime,
-        calendar_id: str = 'primary'
-    ) -> List[BusyTimeSlot]:
-        """
-        Get busy times in the specified date range.
-
-        Args:
-            start_date: Start of range to check
-            end_date: End of range to check
-            calendar_id: Calendar to check (default 'primary')
-
-        Returns:
-            List of busy time slots
-
-        Raises:
-            CalendarEventError: If availability check fails
-        """
-        try:
-            body = {
-                "timeMin": start_date.isoformat() + 'Z',
-                "timeMax": end_date.isoformat() + 'Z',
-                "items": [{"id": calendar_id}]
-            }
-
-            events_result = self.calendar_service.freebusy().query(body=body).execute()
-            cal_busy = events_result['calendars'][calendar_id]['busy']
-
-            return cal_busy
-
-        except HttpError as error:
-            logger.error(f"Calendar API error checking availability: {error}")
-            raise CalendarEventError(f"Failed to check availability: {error}") from error
-
-        except KeyError as e:
-            logger.error(f"Unexpected response format: {e}")
-            return []
-
-    def find_free_slot(
-        self,
-        duration_minutes: int = 30,
-        days_ahead: int = 7
-    ) -> Optional[datetime]:
-        """
-        Find the next available free time slot.
-
-        Args:
-            duration_minutes: Required meeting duration in minutes
-            days_ahead: How many days ahead to search
-
-        Returns:
-            datetime of the next free slot, or None if not found
-
-        Raises:
-            CalendarEventError: If availability check fails
-        """
-        start_date = datetime.now()
-        end_date = start_date + timedelta(days=days_ahead)
-
-        busy_times = self.get_availability(start_date, end_date)
-
-        # Simple algorithm: find gaps between busy times
-        current_time = start_date
-
-        for busy_slot in busy_times:
-            try:
-                slot_start = datetime.fromisoformat(busy_slot['start'].replace('Z', '+00:00'))
-                if (slot_start - current_time).total_seconds() >= duration_minutes * 60:
-                    return current_time
-                current_time = datetime.fromisoformat(busy_slot['end'].replace('Z', '+00:00'))
-            except (KeyError, ValueError) as e:
-                logger.warning(f"Invalid busy slot format: {e}")
-                continue
-
-        # Check if there's time after the last busy slot
-        if (end_date - current_time).total_seconds() >= duration_minutes * 60:
-            return current_time
-
-        return None
+    def quick_add_event(self, text: str, calendar_id: str = "primary") -> str:
+        """Quick add a calendar event using natural language."""
+        event = self.calendar_service.events().quickAdd(calendarId=calendar_id, text=text).execute()
+        return f"Quick-created event:\nID: {event['id']}\nSummary: {event.get('summary')}"

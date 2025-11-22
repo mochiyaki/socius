@@ -1,6 +1,11 @@
+# TLDR
+
+This folder implements tools for gmail and google calendar access, sending emails and stuff
+
+
 # MCP Gmail Server
 
-A Model Context Protocol (MCP) server that provides Gmail access for LLMs, powered by the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk).
+A Model Context Protocol (MCP) server that provides Gmail access for LLMs, powered by the [MCP Python SDK](https://github.com/mod<elcontextprotocol/python-sdk).
 
 ## Features
 
