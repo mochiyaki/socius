@@ -38,22 +38,8 @@ class SociusAgent:
         self._setup_langchain_agent()
 
     def _setup_langchain_agent(self):
-        """Setup Claude with tool calling"""
-
-        # Define tools for Claude API
+        """Setup Claude with tool calling, including full GmailTool integration"""
         self.tools = [
-            {
-                "name": "send_imessage",
-                "description": "Send an iMessage to someone. Input should have 'recipient' (phone number or email) and 'message' (text content) fields.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "recipient": {"type": "string", "description": "Phone number or email of the recipient"},
-                        "message": {"type": "string", "description": "Message content to send"}
-                    },
-                    "required": ["recipient", "message"]
-                }
-            },
             {
                 "name": "send_email",
                 "description": "Send an email to someone.",
@@ -62,46 +48,61 @@ class SociusAgent:
                     "properties": {
                         "to": {"type": "string", "description": "Recipient email address"},
                         "subject": {"type": "string", "description": "Email subject"},
-                        "body": {"type": "string", "description": "Email body content"}
+                        "body": {"type": "string", "description": "Email body content"},
+                        "cc": {"type": "string", "description": "CC recipients (optional)"},
+                        "bcc": {"type": "string", "description": "BCC recipients (optional)"}
                     },
                     "required": ["to", "subject", "body"]
                 }
             },
             {
-                "name": "schedule_meeting",
-                "description": "Schedule a calendar meeting.",
+                "name": "create_calendar_event",
+                "description": "Create a calendar event.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "summary": {"type": "string", "description": "Meeting title"},
-                        "start_time": {"type": "string", "description": "Start time in ISO format"},
-                        "duration_minutes": {"type": "integer", "description": "Duration in minutes"},
-                        "attendees": {"type": "array", "items": {"type": "string"}, "description": "List of attendee emails"},
-                        "description": {"type": "string", "description": "Optional meeting description"}
+                        "summary": {"type": "string", "description": "Event title"},
+                        "start_time": {"type": "string", "description": "Start time ISO format"},
+                        "end_time": {"type": "string", "description": "End time ISO format"},
+                        "attendees": {"type": "array", "items": {"type": "string"}, "description": "Attendee emails"},
+                        "description": {"type": "string", "description": "Optional event description"}
                     },
-                    "required": ["summary", "start_time", "duration_minutes", "attendees"]
+                    "required": ["summary", "start_time", "end_time", "attendees"]
                 }
             },
             {
-                "name": "get_profile",
-                "description": "Get a user's profile information.",
+                "name": "find_next_free_slot",
+                "description": "Find the next available free time slot in the user's calendar.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "user_id": {"type": "string", "description": "User ID to fetch"}
+                        "duration_minutes": {"type": "integer", "description": "Length of the meeting in minutes"},
+                        "days_ahead": {"type": "integer", "description": "Search within the next N days"}
                     },
-                    "required": ["user_id"]
+                    "required": ["duration_minutes"]
                 }
             },
             {
-                "name": "calculate_match",
-                "description": "Calculate compatibility match score between me and another user.",
+                "name": "get_email_message",
+                "description": "Fetch a single Gmail message by its ID.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "other_user_id": {"type": "string", "description": "ID of the other user"}
+                        "message_id": {"type": "string", "description": "Gmail message ID"}
                     },
-                    "required": ["other_user_id"]
+                    "required": ["message_id"]
+                }
+            },
+            {
+                "name": "get_calendar_event",
+                "description": "Fetch a single Google Calendar event by ID.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "event_id": {"type": "string", "description": "Calendar event ID"},
+                        "calendar_id": {"type": "string", "description": "Calendar ID (default: primary)"}
+                    },
+                    "required": ["event_id"]
                 }
             }
         ]
@@ -149,57 +150,45 @@ Remember: You represent {user_name}, so maintain their reputation and authentici
     def _execute_tool(self, tool_name: str, tool_input: Dict) -> Dict:
         """Execute a tool and return the result"""
         try:
-            if tool_name == "send_imessage":
-                result = self.imessage_tool.send_message(
-                    tool_input['recipient'],
-                    tool_input['message']
-                )
-                return result
-
-            elif tool_name == "send_email":
-                result = self.gmail_tool.send_email(
+            if tool_name == "send_email":
+                return self.gmail_tool.send_email(
                     to=tool_input['to'],
                     subject=tool_input['subject'],
-                    body=tool_input['body']
+                    body=tool_input['body'],
+                    cc=tool_input.get('cc'),
+                    bcc=tool_input.get('bcc')
                 )
-                return result
 
-            elif tool_name == "schedule_meeting":
-                from datetime import datetime, timedelta
-
+            elif tool_name == "create_calendar_event":
+                from datetime import datetime
                 start_time = datetime.fromisoformat(tool_input['start_time'])
-                duration = int(tool_input.get('duration_minutes', 30))
-                end_time = start_time + timedelta(minutes=duration)
-
-                result = self.gmail_tool.create_calendar_event(
+                end_time = datetime.fromisoformat(tool_input['end_time'])
+                return self.gmail_tool.create_calendar_event(
                     summary=tool_input['summary'],
                     start_time=start_time,
                     end_time=end_time,
                     attendees=tool_input['attendees'],
                     description=tool_input.get('description')
                 )
-                return result
 
-            elif tool_name == "get_profile":
-                profile = self.mcp_client.get_user_profile(tool_input['user_id'])
-                return profile or {}
-
-            elif tool_name == "calculate_match":
-                other_profile = self.mcp_client.get_user_profile(tool_input['other_user_id'])
-                score = self.matching_engine.calculate_match_score(
-                    self.user_profile,
-                    other_profile
-                )
-                reason = self.matching_engine.get_match_reason(
-                    self.user_profile,
-                    other_profile,
-                    score
-                )
+            elif tool_name == "find_next_free_slot":
+                duration = int(tool_input.get('duration_minutes', 30))
+                days_ahead = int(tool_input.get('days_ahead', 7))
+                slot = self.gmail_tool.find_free_slot(duration_minutes=duration, days_ahead=days_ahead)
                 return {
-                    'score': score,
-                    'is_high_match': self.matching_engine.is_high_match(score),
-                    'reason': reason
+                    "next_free_slot": slot.isoformat() if slot else None,
+                    "success": slot is not None
                 }
+
+            elif tool_name == "get_email_message":
+                message_id = tool_input['message_id']
+                content = self.gmail_tool.get_emails([message_id])
+                return {"content": content}
+
+            elif tool_name == "get_calendar_event":
+                event_id = tool_input['event_id']
+                calendar_id = tool_input.get('calendar_id', 'primary')
+                return self.gmail_tool.get_calendar_event(event_id=event_id, calendar_id=calendar_id)
 
             else:
                 return {'error': f'Unknown tool: {tool_name}'}
