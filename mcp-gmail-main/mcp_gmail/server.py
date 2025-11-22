@@ -25,18 +25,21 @@ from mcp_gmail.gmail import (
     search_messages,
 )
 from mcp_gmail.gmail import send_email as gmail_send_email
+from googleapiclient.discovery import build as google_build
 
 # Initialize the Gmail service
 service = get_gmail_service(
     credentials_path=settings.credentials_path, token_path=settings.token_path, scopes=settings.scopes
 )
 
+calendar_service = google_build("calendar", "v3", credentials=service._http.credentials)
 mcp = FastMCP(
     "Gmail MCP Server",
     instructions="Access and interact with Gmail. You can get messages, threads, search emails, and send or compose new messages.",  # noqa: E501
 )
 
 EMAIL_PREVIEW_LENGTH = 200
+
 
 
 # Helper functions
@@ -460,6 +463,161 @@ def get_emails(message_ids: list[str]) -> str:
             result += f"Error: {error}\n"
 
     return result
+
+# ---------- TOOLS ----------
+
+@mcp.tool()
+def get_calendar_event(event_id: str, calendar_id: str = "primary") -> str:
+    """Fetch a single Google Calendar event by ID."""
+    try:
+        event = calendar_service.events().get(
+            calendarId=calendar_id, eventId=event_id
+        ).execute()
+        return (
+            f"Event ID: {event_id}\n"
+            f"Summary: {event.get('summary')}\n"
+            f"Start: {event['start']}\n"
+            f"End: {event['end']}"
+        )
+    except Exception as e:
+        return f"Error retrieving event: {e}"
+
+
+# ---------- RESOURCES ----------
+
+@mcp.resource("calendar://calendars/{calendar_id}")
+def get_calendar(calendar_id: str) -> str:
+    """Fetch calendar metadata."""
+    try:
+        calendar = calendar_service.calendars().get(calendarId=calendar_id).execute()
+        return f"Calendar: {calendar.get('summary')} (ID: {calendar_id})"
+    except Exception as e:
+        return f"Error retrieving calendar: {e}"
+
+
+# ---------- OTHER TOOLS ----------
+
+@mcp.tool()
+def list_calendars() -> str:
+    """List all calendars for the user."""
+    calendars = calendar_service.calendarList().list().execute().get("items", [])
+    result = "Your Calendars:\n"
+    for cal in calendars:
+        result += f"- {cal.get('summary')} (ID: {cal.get('id')})\n"
+    return result
+
+
+@mcp.tool()
+def list_events(
+    calendar_id: str = "primary",
+    max_results: int = 10,
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+) -> str:
+    """
+    List events on a calendar.
+    time_min / time_max format: ISO8601 (e.g. 2025-01-01T00:00:00Z)
+    """
+    events = calendar_service.events().list(
+        calendarId=calendar_id,
+        maxResults=max_results,
+        timeMin=time_min,
+        timeMax=time_max,
+        singleEvents=True,
+        orderBy="startTime",
+    ).execute().get("items", [])
+
+    result = f"Found {len(events)} events:\n"
+    for e in events:
+        result += (
+            f"\nEvent ID: {e['id']}\n"
+            f"Summary: {e.get('summary')}\n"
+            f"Start: {e['start']}\n"
+            f"End: {e['end']}\n"
+        )
+    return result
+
+
+@mcp.tool()
+def create_event(
+    summary: str,
+    start: str,
+    end: str,
+    description: Optional[str] = None,
+    calendar_id: str = "primary",
+) -> str:
+    """
+    Create an event.
+    start/end format: ISO8601 (e.g. 2025-01-01T15:00:00-08:00)
+    """
+    event_data = {
+        "summary": summary,
+        "description": description,
+        "start": {"dateTime": start},
+        "end": {"dateTime": end},
+    }
+
+    event = calendar_service.events().insert(
+        calendarId=calendar_id, body=event_data
+    ).execute()
+
+    return f"Event created:\nID: {event['id']}\nSummary: {summary}"
+
+
+@mcp.tool()
+def update_event(
+    event_id: str,
+    summary: Optional[str] = None,
+    description: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    calendar_id: str = "primary",
+) -> str:
+    """Update an existing event."""
+    event = calendar_service.events().get(
+        calendarId=calendar_id, eventId=event_id
+    ).execute()
+
+    if summary:
+        event["summary"] = summary
+    if description:
+        event["description"] = description
+    if start:
+        event["start"] = {"dateTime": start}
+    if end:
+        event["end"] = {"dateTime": end}
+
+    updated = calendar_service.events().update(
+        calendarId=calendar_id, eventId=event_id, body=event
+    ).execute()
+
+    return f"Event updated: {updated['id']}"
+
+
+@mcp.tool()
+def delete_event(event_id: str, calendar_id: str = "primary") -> str:
+    """Delete a calendar event."""
+    calendar_service.events().delete(
+        calendarId=calendar_id, eventId=event_id
+    ).execute()
+    return f"Event {event_id} deleted."
+
+
+@mcp.tool()
+def quick_add_event(text: str, calendar_id: str = "primary") -> str:
+    """
+    Create an event using natural language.
+    Example: "Dinner with Alice tomorrow at 7pm"
+    """
+    event = calendar_service.events().quickAdd(
+        calendarId=calendar_id, text=text
+    ).execute()
+
+    return f"Quick-created event:\nID: {event['id']}\nSummary: {event.get('summary')}"
+
+
+# ---------- MCP SERVER ENTRY ----------
+
 if __name__ == "__main__":
     mcp.settings.port = 8090
     mcp.settings.host = "127.0.0.1"

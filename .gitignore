@@ -61,3 +61,4 @@ logs/
 
 # iMessage server logs
 imessage-server/imessage_log.db
+*.zip
